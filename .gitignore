@@ -1,0 +1,13 @@
+
+# Python
+backend/.venv/
+__pycache__/
+*.py[cod]
+
+# Secrets
+.env
+**/.env
+
+# Editor and system files
+.DS_Store
+.vscode/
