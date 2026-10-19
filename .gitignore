@@ -7,6 +7,14 @@ __pycache__/
 # Secrets
 .env
 **/.env
+.env.*
+!.env.example
+**/.env.*
+!**/.env.example
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
 
 # Editor and system files
 .DS_Store

@@ -1,17 +1,21 @@
 
+
 import os
-from fastapi.middleware.cors import CORSMiddleware
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from urllib.parse import quote_plus
 from typing import Literal
+from urllib.parse import quote_plus
 
-
+import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordRequestForm
+from pwdlib import PasswordHash
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+
 
 load_dotenv()
 
@@ -31,6 +35,16 @@ DATABASE_URL = (
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+
+if not JWT_SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY is missing from backend/.env")
+
+password_hash = PasswordHash.recommended()
+oauth2_scheme = HTTPBearer()
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+
 app = FastAPI(
     title="Pharmacy Inventory API",
     description="API for managing pharmacy inventory",
@@ -44,6 +58,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class PharmacyRegister(BaseModel):
+    store_name: str = Field(min_length=2, max_length=150)
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
 
 class MedicationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
@@ -84,6 +110,185 @@ def medication_dict(row):
     }
 
 
+
+def create_access_token(user_id: int, pharmacy_id: int) -> str:
+    now = datetime.now(timezone.utc)
+
+    payload = {
+        "sub": str(user_id),
+        "pharmacy_id": pharmacy_id,
+        "iat": now,
+        "exp": now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    }
+
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme)
+):
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=["HS256"],
+        )
+
+        user_id = int(payload["sub"])
+        pharmacy_id = int(payload["pharmacy_id"])
+    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired login token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        with engine.connect() as connection:
+            user = connection.execute(
+                text("""
+                    SELECT id, pharmacy_id, email
+                    FROM users
+                    WHERE id = :user_id
+                      AND pharmacy_id = :pharmacy_id
+                """),
+                {
+                    "user_id": user_id,
+                    "pharmacy_id": pharmacy_id,
+                },
+            ).mappings().first()
+
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Account not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        return dict(user)
+
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not verify account",
+        )
+
+
+
+
+@app.post("/auth/register", status_code=201)
+def register_pharmacy(account: PharmacyRegister):
+    email = account.email.lower()
+
+    try:
+        with engine.begin() as connection:
+            existing_user = connection.execute(
+                text("SELECT id FROM users WHERE email = :email"),
+                {"email": email},
+            ).first()
+
+            if existing_user:
+                raise HTTPException(
+                    status_code=409,
+                    detail="An account with this email already exists",
+                )
+
+            pharmacy_result = connection.execute(
+                text("""
+                    INSERT INTO pharmacies (store_name, contact_email)
+                    VALUES (:store_name, :email)
+                """),
+                {
+                    "store_name": account.store_name.strip(),
+                    "email": email,
+                },
+            )
+
+            pharmacy_id = pharmacy_result.lastrowid
+
+            user_result = connection.execute(
+                text("""
+                    INSERT INTO users (pharmacy_id, email, password_hash)
+                    VALUES (:pharmacy_id, :email, :password_hash)
+                """),
+                {
+                    "pharmacy_id": pharmacy_id,
+                    "email": email,
+                    "password_hash": password_hash.hash(account.password),
+                },
+            )
+
+            user_id = user_result.lastrowid
+
+        return {
+            "message": "Pharmacy account created successfully",
+            "user_id": user_id,
+            "pharmacy_id": pharmacy_id,
+            "store_name": account.store_name.strip(),
+            "email": email,
+        }
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not create pharmacy account",
+        )
+
+
+
+@app.post("/auth/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    email = form_data.username.lower()
+
+    try:
+        with engine.connect() as connection:
+            user = connection.execute(
+                text("""
+                    SELECT
+                        u.id,
+                        u.pharmacy_id,
+                        u.email,
+                        u.password_hash,
+                        p.store_name
+                    FROM users u
+                    JOIN pharmacies p ON p.id = u.pharmacy_id
+                    WHERE u.email = :email
+                """),
+                {"email": email},
+            ).mappings().first()
+
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not access account",
+        )
+
+    if not user or not password_hash.verify(
+        form_data.password, user["password_hash"]
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect email or password",
+        )
+
+    token = create_access_token(
+        user_id=user["id"],
+        pharmacy_id=user["pharmacy_id"],
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
+
+
+
+
 @app.get("/")
 def home():
     return {"message": "Pharmacy Inventory API is running!"}
@@ -101,54 +306,93 @@ def health_check():
         )
 
 
+
 @app.get("/medications")
-def get_medications():
+def get_medications(current_user=Depends(get_current_user)):
     try:
         with engine.connect() as connection:
             rows = connection.execute(
-                text("SELECT * FROM medications ORDER BY name")
+                text("""
+                    SELECT *
+                    FROM medications
+                    WHERE pharmacy_id = :pharmacy_id
+                    ORDER BY name
+                """),
+                {"pharmacy_id": current_user["pharmacy_id"]},
             ).mappings().all()
+
         return [medication_dict(row) for row in rows]
+
     except SQLAlchemyError:
         raise HTTPException(
-            status_code=500, detail="Could not retrieve medications"
+            status_code=500,
+            detail="Could not retrieve medications",
         )
 
 
+
+
 @app.post("/medications", status_code=201)
-def create_medication(medication: MedicationCreate):
+def create_medication(
+    medication: MedicationCreate,
+    current_user=Depends(get_current_user),
+):
     data = medication.model_dump()
+    data["pharmacy_id"] = current_user["pharmacy_id"]
+
     try:
         with engine.begin() as connection:
             result = connection.execute(
                 text("""
                     INSERT INTO medications
-                    (name, strength, dosage_form, ndc, quantity, reorder_level,
-                    unit_price, expiration_date, supplier)
+                    (
+                        pharmacy_id, name, strength, dosage_form, ndc,
+                        quantity, reorder_level, unit_price,
+                        expiration_date, supplier
+                    )
                     VALUES
-                    (:name, :strength, :dosage_form, :ndc, :quantity, :reorder_level,
-                    :unit_price, :expiration_date, :supplier)
+                    (
+                        :pharmacy_id, :name, :strength, :dosage_form, :ndc,
+                        :quantity, :reorder_level, :unit_price,
+                        :expiration_date, :supplier
+                    )
                 """),
                 data,
             )
-            new_id = result.lastrowid
+
             row = connection.execute(
-                text("SELECT * FROM medications WHERE id = :id"),
-                {"id": new_id},
+                text("""
+                    SELECT *
+                    FROM medications
+                    WHERE id = :id
+                      AND pharmacy_id = :pharmacy_id
+                """),
+                {
+                    "id": result.lastrowid,
+                    "pharmacy_id": current_user["pharmacy_id"],
+                },
             ).mappings().one()
+
         return medication_dict(row)
+
     except SQLAlchemyError:
         raise HTTPException(
-            status_code=500, detail="Could not create medication"
+            status_code=500,
+            detail="Could not create medication",
         )
+
 
 
 @app.put("/medications/{medication_id}")
 def update_medication(
-    medication_id: int, medication: MedicationUpdate
+    medication_id: int,
+    medication: MedicationUpdate,
+    current_user=Depends(get_current_user),
 ):
     data = medication.model_dump()
     data["id"] = medication_id
+    data["pharmacy_id"] = current_user["pharmacy_id"]
+
     try:
         with engine.begin() as connection:
             result = connection.execute(
@@ -164,61 +408,101 @@ def update_medication(
                         expiration_date = :expiration_date,
                         supplier = :supplier
                     WHERE id = :id
+                      AND pharmacy_id = :pharmacy_id
                 """),
                 data,
             )
+
             if result.rowcount == 0:
-                exists = connection.execute(
-                    text("SELECT id FROM medications WHERE id = :id"),
-                    {"id": medication_id},
-                ).first()
-                if not exists:
-                    raise HTTPException(
-                        status_code=404, detail="Medication not found"
-                    )
+                raise HTTPException(
+                    status_code=404,
+                    detail="Medication not found",
+                )
+
             row = connection.execute(
-                text("SELECT * FROM medications WHERE id = :id"),
-                {"id": medication_id},
+                text("""
+                    SELECT *
+                    FROM medications
+                    WHERE id = :id
+                      AND pharmacy_id = :pharmacy_id
+                """),
+                {
+                    "id": medication_id,
+                    "pharmacy_id": current_user["pharmacy_id"],
+                },
             ).mappings().one()
+
         return medication_dict(row)
+
+    except HTTPException:
+        raise
     except SQLAlchemyError:
         raise HTTPException(
-            status_code=500, detail="Could not update medication"
+            status_code=500,
+            detail="Could not update medication",
         )
+
 
 
 @app.delete("/medications/{medication_id}")
-def delete_medication(medication_id: int):
+def delete_medication(
+    medication_id: int,
+    current_user=Depends(get_current_user),
+):
     try:
         with engine.begin() as connection:
             result = connection.execute(
-                text("DELETE FROM medications WHERE id = :id"),
-                {"id": medication_id},
+                text("""
+                    DELETE FROM medications
+                    WHERE id = :id
+                      AND pharmacy_id = :pharmacy_id
+                """),
+                {
+                    "id": medication_id,
+                    "pharmacy_id": current_user["pharmacy_id"],
+                },
             )
+
             if result.rowcount == 0:
                 raise HTTPException(
-                    status_code=404, detail="Medication not found"
+                    status_code=404,
+                    detail="Medication not found",
                 )
+
         return {"message": "Medication deleted successfully"}
+
+    except HTTPException:
+        raise
     except SQLAlchemyError:
         raise HTTPException(
-            status_code=500, detail="Could not delete medication"
+            status_code=500,
+            detail="Could not delete medication",
         )
+
     
 
 @app.post("/stock-movements", status_code=201)
-def create_stock_movement(movement: StockMovementCreate):
+def create_stock_movement(
+    movement: StockMovementCreate,
+    current_user=Depends(get_current_user),
+):
+    pharmacy_id = current_user["pharmacy_id"]
+
     try:
         with engine.begin() as connection:
-            # Lock the medication row while processing this movement.
+            # Lock only a medication belonging to this pharmacy.
             medication = connection.execute(
                 text("""
                     SELECT id, quantity
                     FROM medications
                     WHERE id = :id
+                      AND pharmacy_id = :pharmacy_id
                     FOR UPDATE
                 """),
-                {"id": movement.medication_id},
+                {
+                    "id": movement.medication_id,
+                    "pharmacy_id": pharmacy_id,
+                },
             ).mappings().first()
 
             if not medication:
@@ -234,7 +518,7 @@ def create_stock_movement(movement: StockMovementCreate):
             elif movement.movement_type == "removed":
                 change = -movement.quantity
             else:
-                # Adjustment sets the stock to the requested quantity.
+                # Adjustment sets stock to the requested quantity.
                 change = movement.quantity - current_quantity
 
             new_quantity = current_quantity + change
@@ -250,10 +534,12 @@ def create_stock_movement(movement: StockMovementCreate):
                     UPDATE medications
                     SET quantity = :quantity
                     WHERE id = :id
+                      AND pharmacy_id = :pharmacy_id
                 """),
                 {
                     "quantity": new_quantity,
                     "id": movement.medication_id,
+                    "pharmacy_id": pharmacy_id,
                 },
             )
 
@@ -292,8 +578,11 @@ def create_stock_movement(movement: StockMovementCreate):
         )
 
 
+
 @app.get("/stock-movements")
-def get_stock_movements():
+def get_stock_movements(current_user=Depends(get_current_user)):
+    pharmacy_id = current_user["pharmacy_id"]
+
     try:
         with engine.connect() as connection:
             rows = connection.execute(
@@ -308,8 +597,10 @@ def get_stock_movements():
                         sm.created_at
                     FROM stock_movements sm
                     JOIN medications m ON m.id = sm.medication_id
+                    WHERE m.pharmacy_id = :pharmacy_id
                     ORDER BY sm.created_at DESC, sm.id DESC
-                """)
+                """),
+                {"pharmacy_id": pharmacy_id},
             ).mappings().all()
 
         return [medication_dict(row) for row in rows]
@@ -319,4 +610,3 @@ def get_stock_movements():
             status_code=500,
             detail="Could not retrieve stock movement history",
         )
-
