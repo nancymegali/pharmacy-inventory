@@ -36,7 +36,17 @@ DATABASE_URL = (
     f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+DB_SSL = os.getenv("DB_SSL", "false").lower() == "true"
+
+connect_args = {}
+if DB_SSL:
+    connect_args["ssl"] = {"ssl": True}
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    connect_args=connect_args,
+)
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
@@ -57,9 +67,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
+frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+allowed_origins = [
+    frontend_url.rstrip("/"),
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
