@@ -5,8 +5,11 @@ import {
   Search, RefreshCw, Pill, Plus, X, Pencil, Trash2
 } from "lucide-react";
 import "./App.css";
+import { apiFetch } from "./api";
+import { LogOut } from "lucide-react";
 
 const API_URL = "http://127.0.0.1:8000";
+
 
 const formatPrice = (price) => {
   if (price === null || price === undefined || price === "") {
@@ -60,12 +63,174 @@ function App() {
   const [stockSuccess, setStockSuccess] = useState("");
   const [stockLoading, setStockLoading] = useState(false);
 
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    Boolean(localStorage.getItem("medstock_token"))
+  );
+  const [authMode, setAuthMode] = useState("login");
+  const [resetToken, setResetToken] = useState(
+    new URLSearchParams(window.location.hash.slice(1)).get("reset-token") || ""
+  );
+  const [resetMessage, setResetMessage] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authForm, setAuthForm] = useState({
+    store_name: "",
+    email: "",
+    password: "",
+  });
+
+  const handleLogout = () => {
+    localStorage.removeItem("medstock_token");
+    setIsAuthenticated(false);
+    setAuthForm({
+      store_name: "",
+      email: "",
+      password: "",
+    });
+    setAuthMode("login");
+    setAuthError("");
+  };
+
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+
+    try {
+      if (authMode === "register") {
+        const registerResponse = await apiFetch("/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(authForm),
+        });
+
+        if (!registerResponse.ok) {
+          const data = await registerResponse.json();
+          throw new Error(data.detail || "Registration failed.");
+        }
+      }
+
+      const loginResponse = await apiFetch("/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          username: authForm.email,
+          password: authForm.password,
+        }),
+      });
+
+      const loginData = await loginResponse.json();
+
+      if (!loginResponse.ok) {
+        throw new Error(loginData.detail || "Login failed.");
+      }
+
+      localStorage.setItem("medstock_token", loginData.access_token);
+      setIsAuthenticated(true);
+      await loadMedications();
+      await fetchMovements();
+    } catch (error) {
+      setAuthError(error.message || "Something went wrong.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+
+  const handleForgotPassword = async (event) => {
+    event.preventDefault();
+    setAuthError("");
+    setResetMessage("");
+    setAuthLoading(true);
+
+    try {
+      const response = await apiFetch("/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({
+          email: authForm.email.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail || "Could not process your request. Please try again."
+        );
+      }
+
+      setResetMessage(
+        "If an account exists for that email, a password reset link has been sent."
+      );
+    } catch (error) {
+      setAuthError(error.message || "Something went wrong. Please try again.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+
+  const handleResetPassword = async (event) => {
+    event.preventDefault();
+    setAuthError("");
+    setResetMessage("");
+
+    const newPassword = event.currentTarget.newPassword.value;
+    const confirmPassword = event.currentTarget.confirmPassword.value;
+
+    if (newPassword !== confirmPassword) {
+      setAuthError("Passwords do not match.");
+      return;
+    }
+
+    if (newPassword.length < 12) {
+      setAuthError("Password must be at least 12 characters.");
+      return;
+    }
+
+    setAuthLoading(true);
+
+    try {
+      const response = await apiFetch("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({
+          token: resetToken,
+          new_password: newPassword,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not reset your password.");
+      }
+
+      setResetMessage("Password reset successfully. You can now sign in.");
+      setResetToken("");
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search
+      );
+      setAuthMode("login");
+      setAuthForm((previous) => ({ ...previous, password: "" }));
+    } catch (error) {
+      setAuthError(error.message || "Could not reset your password.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+
+
   async function loadMedications() {
     setLoading(true);
     setError("");
 
     try {
-      const response = await fetch(`${API_URL}/medications`);
+      const response = await apiFetch("/medications");
       if (!response.ok) throw new Error("Could not load inventory.");
       setMedications(await response.json());
     } catch {
@@ -113,7 +278,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `${API_URL}/medications/${med.id}`,
+       `/medications/${med.id}`,
         { method: "DELETE" }
       );
 
@@ -158,10 +323,8 @@ function App() {
     try {
       const isEditing = editingId !== null;
 
-      const response = await fetch(
-        isEditing
-          ? `${API_URL}/medications/${editingId}`
-          : `${API_URL}/medications`,
+      const response = await apiFetch(
+        isEditing ? `/medications/${editingId}` : "/medications",
         {
           method: isEditing ? "PUT" : "POST",
           headers: { "Content-Type": "application/json" },
@@ -260,7 +423,7 @@ function App() {
 
   const fetchMovements = async () => {
     try {
-      const response = await fetch(`${API_URL}/stock-movements`);
+      const response = await apiFetch("/stock-movements");
 
       if (!response.ok) {
         throw new Error("Could not load stock movement history.");
@@ -281,7 +444,7 @@ function App() {
     setStockLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/stock-movements`, {
+      const response = await apiFetch("/stock-movements", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -326,6 +489,202 @@ function App() {
       setStockLoading(false);
     }
   };
+
+  
+  if (!isAuthenticated) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <div className="auth-logo">M</div>
+          <h1>MedStock</h1>
+          <p>Pharmacy inventory management</p>
+
+          <h2>
+            {resetToken
+              ? "Choose a new password"
+              : authMode === "login"
+                ? "Welcome back"
+                : authMode === "register"
+                  ? "Create your account"
+                  : "Reset your password"}
+          </h2>
+
+          {resetToken ? (
+            <form onSubmit={handleResetPassword}>
+              <p>Enter and confirm your new password.</p>
+
+              <label>
+                New password
+                <input
+                  type="password"
+                  name="newPassword"
+                  required
+                  minLength={12}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  placeholder="At least 12 characters"
+                />
+              </label>
+
+              <label>
+                Confirm new password
+                <input
+                  type="password"
+                  name="confirmPassword"
+                  required
+                  minLength={12}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  placeholder="Re-enter your password"
+                />
+              </label>
+
+              {authError && <div className="auth-error">{authError}</div>}
+
+              <button type="submit" disabled={authLoading}>
+                {authLoading ? "Updating..." : "Reset password"}
+              </button>
+            </form>
+          ) : authMode === "forgot" ? (
+            <form onSubmit={handleForgotPassword}>
+              <p>Enter your email and we'll send you a reset link.</p>
+
+              <label>
+                Email
+                <input
+                  type="email"
+                  required
+                  value={authForm.email}
+                  onChange={(e) =>
+                    setAuthForm({ ...authForm, email: e.target.value })
+                  }
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                />
+              </label>
+
+              {authError && <div className="auth-error">{authError}</div>}
+              {resetMessage && <div className="auth-success">{resetMessage}</div>}
+
+              <button type="submit" disabled={authLoading}>
+                {authLoading ? "Sending..." : "Send reset link"}
+              </button>
+
+              <div className="auth-switch">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("login");
+                    setAuthError("");
+                    setResetMessage("");
+                  }}
+                >
+                  Back to Sign In
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <form onSubmit={handleAuthSubmit}>
+                {authMode === "register" && (
+                  <label>
+                    Pharmacy name
+                    <input
+                      required
+                      value={authForm.store_name}
+                      onChange={(e) =>
+                        setAuthForm({
+                          ...authForm,
+                          store_name: e.target.value,
+                        })
+                      }
+                      placeholder="Your pharmacy name"
+                    />
+                  </label>
+                )}
+
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    required
+                    value={authForm.email}
+                    onChange={(e) =>
+                      setAuthForm({ ...authForm, email: e.target.value })
+                    }
+                    autoComplete="email"
+                    placeholder="you@example.com"
+                  />
+                </label>
+
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    required
+                    minLength={authMode === "register" ? 12 : undefined}
+                    value={authForm.password}
+                    onChange={(e) =>
+                      setAuthForm({ ...authForm, password: e.target.value })
+                    }
+                    autoComplete={
+                      authMode === "register" ? "new-password" : "current-password"
+                    }
+                    placeholder={
+                      authMode === "register"
+                        ? "At least 12 characters"
+                        : "Enter your password"
+                    }
+                  />
+                </label>
+
+                {authMode === "login" && (
+                  <button
+                    type="button"
+                    className="forgot-password-link"
+                    onClick={() => {
+                      setAuthMode("forgot");
+                      setAuthError("");
+                      setResetMessage("");
+                    }}
+                  >
+                    Forgot password?
+                  </button>
+                )}
+
+                {authError && <div className="auth-error">{authError}</div>}
+
+                <button type="submit" disabled={authLoading}>
+                  {authLoading
+                    ? "Please wait..."
+                    : authMode === "login"
+                      ? "Sign In"
+                      : "Create Account"}
+                </button>
+              </form>
+
+              <div className="auth-switch">
+                {authMode === "login"
+                  ? "Don't have an account?"
+                  : "Already have an account?"}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(authMode === "login" ? "register" : "login");
+                    setAuthError("");
+                    setResetMessage("");
+                  }}
+                >
+                  {authMode === "login" ? "Register" : "Sign In"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
 
   return (
     <div className="app-shell">
@@ -372,9 +731,22 @@ function App() {
         </div>
         <div className="sidebar-note">
           <Activity size={17} />
-          <div><strong>System status</strong><span>Local development</span></div>
+          <div>
+            <strong>System status</strong>
+            <span>Local development</span>
+          </div>
           <i />
         </div>
+
+        <button
+          type="button"
+          className="logout-button"
+          onClick={handleLogout}
+        >
+          <LogOut size={18} />
+          <span>Log Out</span>
+        </button>
+
         <div className="sidebar-footer">
           PHARMACY INVENTORY<br />MANAGEMENT
         </div>

@@ -1,4 +1,7 @@
-
+import secrets
+import hashlib
+from datetime import datetime, timedelta, timezone
+import requests
 
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -36,6 +39,9 @@ DATABASE_URL = (
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 if not JWT_SECRET_KEY:
     raise RuntimeError("JWT_SECRET_KEY is missing from backend/.env")
@@ -69,6 +75,13 @@ class PharmacyRegister(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=12, max_length=128)
 
 
 class MedicationCreate(BaseModel):
@@ -239,6 +252,209 @@ def register_pharmacy(account: PharmacyRegister):
         )
 
 
+@app.post("/auth/forgot-password")
+def forgot_password(request: ForgotPasswordRequest):
+    email = request.email.lower()
+
+    # Always return the same message to avoid revealing
+    # whether an account exists for this email.
+    response_message = {
+        "message": (
+            "If an account exists for that email, "
+            "a password reset link has been sent."
+        )
+    }
+
+    try:
+        with engine.connect() as connection:
+            user = connection.execute(
+                text("""
+                    SELECT id
+                    FROM users
+                    WHERE email = :email
+                """),
+                {"email": email},
+            ).mappings().first()
+
+        if not user:
+            return response_message
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(
+            raw_token.encode("utf-8")
+        ).hexdigest()
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        expires_at = now + timedelta(minutes=30)
+
+        with engine.begin() as connection:
+            # Invalidate previous unused reset tokens.
+            connection.execute(
+                text("""
+                    UPDATE password_reset_tokens
+                    SET used_at = :now
+                    WHERE user_id = :user_id
+                      AND used_at IS NULL
+                """),
+                {
+                    "now": now,
+                    "user_id": user["id"],
+                },
+            )
+
+            connection.execute(
+                text("""
+                    INSERT INTO password_reset_tokens
+                    (user_id, token_hash, expires_at)
+                    VALUES (:user_id, :token_hash, :expires_at)
+                """),
+                {
+                    "user_id": user["id"],
+                    "token_hash": token_hash,
+                    "expires_at": expires_at,
+                },
+            )
+
+        reset_link = (
+            f"{FRONTEND_URL}/#reset-token={raw_token}"
+        )
+
+        email_payload = {
+            "sender": {
+                "name": "MedStock",
+                "email": BREVO_SENDER_EMAIL,
+            },
+            "to": [{"email": email}],
+            "subject": "Reset your MedStock password",
+            "textContent": (
+                "We received a request to reset your MedStock password. "
+                "Open this link within 30 minutes to choose a new password:\n\n"
+                f"{reset_link}\n\n"
+                "If you did not request this, you can ignore this email."
+            ),
+            "htmlContent": (
+                "<p>We received a request to reset your MedStock password.</p>"
+                "<p>This link expires in 30 minutes.</p>"
+                f'<p><a href="{reset_link}">Reset your password</a></p>'
+                "<p>If you did not request this, you can ignore this email.</p>"
+            ),
+        }
+
+        try:
+            email_response = requests.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": BREVO_API_KEY or "",
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                },
+                json=email_payload,
+                timeout=10,
+            )
+            email_response.raise_for_status()
+
+        except requests.RequestException:
+            # Invalidate the token if the email could not be sent.
+            with engine.begin() as connection:
+                connection.execute(
+                    text("""
+                        UPDATE password_reset_tokens
+                        SET used_at = :now
+                        WHERE token_hash = :token_hash
+                    """),
+                    {
+                        "now": datetime.now(timezone.utc).replace(
+                            tzinfo=None
+                        ),
+                        "token_hash": token_hash,
+                    },
+                )
+
+            raise HTTPException(
+                status_code=502,
+                detail="Could not send the password reset email. Please try again.",
+            )
+
+        return response_message
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not process the password reset request.",
+        )
+
+
+@app.post("/auth/reset-password")
+def reset_password(request: ResetPasswordRequest):
+    token_hash = hashlib.sha256(
+        request.token.encode("utf-8")
+    ).hexdigest()
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    try:
+        with engine.begin() as connection:
+            reset_record = connection.execute(
+                text("""
+                    SELECT user_id
+                    FROM password_reset_tokens
+                    WHERE token_hash = :token_hash
+                      AND used_at IS NULL
+                      AND expires_at > :now
+                """),
+                {
+                    "token_hash": token_hash,
+                    "now": now,
+                },
+            ).mappings().first()
+
+            if not reset_record:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This reset link is invalid or has expired.",
+                )
+
+            connection.execute(
+                text("""
+                    UPDATE users
+                    SET password_hash = :password_hash
+                    WHERE id = :user_id
+                """),
+                {
+                    "password_hash": password_hash.hash(
+                        request.new_password
+                    ),
+                    "user_id": reset_record["user_id"],
+                },
+            )
+
+            # Mark this token used and invalidate other reset links.
+            connection.execute(
+                text("""
+                    UPDATE password_reset_tokens
+                    SET used_at = :now
+                    WHERE user_id = :user_id
+                      AND used_at IS NULL
+                """),
+                {
+                    "now": now,
+                    "user_id": reset_record["user_id"],
+                },
+            )
+
+        return {
+            "message": "Password reset successfully. You can now log in."
+        }
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not reset the password. Please try again.",
+        )
 
 @app.post("/auth/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):

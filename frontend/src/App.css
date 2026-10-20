@@ -943,3 +943,270 @@ button.stat-card:focus-visible {
   color: var(--navy);
   font-weight: 600;
 }
+
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #eef4f8;
+  box-sizing: border-box;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
+  border: 1px solid #e1eaf0;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 12px 36px rgba(33, 60, 78, 0.08);
+  box-sizing: border-box;
+}
+
+.auth-logo {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 16px;
+  border-radius: 15px;
+  background: #dfeaf7;
+  color: #304a66;
+  font-size: 25px;
+  font-weight: 700;
+}
+
+.auth-card h1 {
+  margin: 0 0 6px;
+  color: #304a66;
+  font-family: Manrope, sans-serif;
+  font-size: 30px;
+  text-align: center;
+}
+
+.auth-card > p {
+  margin-bottom: 26px;
+  color: #8496aa;
+  font-size: 14px;
+  text-align: center;
+}
+
+.auth-card h2 {
+  margin: 0 0 10px;
+  color: #304a66;
+  font-family: Manrope, sans-serif;
+  font-size: 22px;
+  text-align: center;
+}
+
+.auth-card form > p {
+  margin: 0 0 22px;
+  color: #8496aa;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.auth-card label {
+  display: block;
+  margin-top: 16px;
+  color: #40566c;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.auth-card form > label:first-child {
+  margin-top: 0;
+}
+
+@media (max-width: 480px) {
+  .auth-page {
+    padding: 16px;
+  }
+
+  .auth-card {
+    padding: 26px 22px;
+  }
+}
+
+
+
+.auth-card input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid #d7e1ec;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #30445b;
+  font: inherit;
+  font-size: 15px;
+  box-sizing: border-box;
+}
+
+.auth-card input::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+
+.auth-card input:focus {
+  outline: none;
+  border-color: #8eafd5;
+  box-shadow: 0 0 0 3px rgba(117, 153, 196, 0.15);
+}
+
+
+
+.auth-card form > button[type="submit"] {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 13px 16px;
+  border: none;
+  border-radius: 10px;
+  background: #536c7c;
+  color: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.auth-card form > button[type="submit"]:hover {
+  background: #40596a;
+}
+
+.auth-card form > button[type="submit"]:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+
+.auth-card button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-error {
+  margin-top: 16px;
+  color: #b42318;
+  font-size: 14px;
+}
+
+.auth-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 22px;
+  color: #718096;
+  font-size: 14px;
+}
+
+.auth-switch button {
+  border: none;
+  background: transparent;
+  color: #315f83;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.logout-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid #d7e1ec;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #213c4e;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.logout-button:hover {
+  background: #e8f0f9;
+}
+
+
+
+/* Consistent authentication buttons */
+.auth-card form > button[type="submit"] {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 13px 16px;
+  border: none;
+  border-radius: 10px;
+  background: #536c7c;
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.auth-card form > button[type="submit"]:hover {
+  background: #40596a;
+}
+
+.auth-card form > button[type="submit"]:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* Light input fields */
+.auth-card input {
+  background: #f8fafc;
+  color: #30445b;
+}
+
+.auth-card input::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+
+/* Forgot password should be a small text link */
+.auth-card .forgot-password-link {
+  display: block;
+  width: fit-content;
+  margin: 0 auto 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #456d8a;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+}
+
+.auth-card .forgot-password-link:hover {
+  color: #213c4e;
+  text-decoration: underline;
+}
+
+/* Keep secondary links from looking like buttons */
+.auth-card .auth-switch button {
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: #456d8a;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-card .auth-switch button:hover {
+  text-decoration: underline;
+}
