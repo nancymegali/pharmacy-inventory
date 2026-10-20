@@ -71,6 +71,7 @@ frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 allowed_origins = [
     frontend_url.rstrip("/"),
+    "https://pharmacy-inventory-eight-theta.vercel.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
