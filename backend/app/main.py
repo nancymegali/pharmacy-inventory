@@ -59,6 +59,7 @@ if not JWT_SECRET_KEY:
 password_hash = PasswordHash.recommended()
 oauth2_scheme = HTTPBearer()
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
+DEMO_PHARMACY_ID = 5
 
 
 app = FastAPI(
@@ -208,6 +209,14 @@ def get_current_user(
         )
 
 
+def require_write_access(current_user=Depends(get_current_user)):
+    if current_user["pharmacy_id"] == DEMO_PHARMACY_ID:
+        raise HTTPException(
+            status_code=403,
+            detail="Demo mode is read-only. Changes are disabled.",
+        )
+
+    return current_user
 
 
 @app.post("/auth/register", status_code=201)
@@ -474,6 +483,45 @@ def reset_password(request: ResetPasswordRequest):
             status_code=500,
             detail="Could not reset the password. Please try again.",
         )
+    
+
+@app.post("/auth/demo")
+def demo_login():
+    try:
+        with engine.connect() as connection:
+            demo_user = connection.execute(
+                text("""
+                    SELECT id, pharmacy_id
+                    FROM users
+                    WHERE pharmacy_id = :pharmacy_id
+                    LIMIT 1
+                """),
+                {"pharmacy_id": DEMO_PHARMACY_ID},
+            ).mappings().first()
+
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not access demo account",
+        )
+
+    if not demo_user:
+        raise HTTPException(
+            status_code=503,
+            detail="Demo account is not configured yet",
+        )
+
+    token = create_access_token(
+        user_id=demo_user["id"],
+        pharmacy_id=demo_user["pharmacy_id"],
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
+
 
 @app.post("/auth/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -570,7 +618,7 @@ def get_medications(current_user=Depends(get_current_user)):
 @app.post("/medications", status_code=201)
 def create_medication(
     medication: MedicationCreate,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_write_access),
 ):
     data = medication.model_dump()
     data["pharmacy_id"] = current_user["pharmacy_id"]
@@ -622,7 +670,7 @@ def create_medication(
 def update_medication(
     medication_id: int,
     medication: MedicationUpdate,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_write_access),
 ):
     data = medication.model_dump()
     data["id"] = medication_id
@@ -682,7 +730,7 @@ def update_medication(
 @app.delete("/medications/{medication_id}")
 def delete_medication(
     medication_id: int,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_write_access),
 ):
     try:
         with engine.begin() as connection:
@@ -719,7 +767,7 @@ def delete_medication(
 @app.post("/stock-movements", status_code=201)
 def create_stock_movement(
     movement: StockMovementCreate,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_write_access),
 ):
     pharmacy_id = current_user["pharmacy_id"]
 
