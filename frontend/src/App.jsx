@@ -325,7 +325,7 @@ function App() {
     if (!confirmed) return;
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
        `/medications/${med.id}`,
         { method: "DELETE" }
       );
