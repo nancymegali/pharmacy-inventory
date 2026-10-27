@@ -28,8 +28,8 @@ const emptyForm = {
   strength: "",
   dosage_form: "",
   ndc: "",
-  quantity: "0",
-  reorder_level: "10",
+  quantity: "",
+  reorder_level: "",
   unit_price: "",
   expiration_date: "",
   supplier: "",
@@ -41,6 +41,7 @@ function App() {
   const [formData, setFormData] = useState({ ...emptyForm });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  const [invalidFields, setInvalidFields] = useState([]);
   const [formSuccess, setFormSuccess] = useState("");
 
 
@@ -60,11 +61,15 @@ function App() {
     reason: "",
   });
   const [stockError, setStockError] = useState("");
+  const [invalidStockFields, setInvalidStockFields] = useState([]);
   const [stockSuccess, setStockSuccess] = useState("");
   const [stockLoading, setStockLoading] = useState(false);
 
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(localStorage.getItem("medstock_token"))
+  );
+  const [isDemo, setIsDemo] = useState(
+    localStorage.getItem("medstock_demo") === "true"
   );
   const [authMode, setAuthMode] = useState("login");
   const [resetToken, setResetToken] = useState(
@@ -81,6 +86,9 @@ function App() {
 
   const handleLogout = () => {
     localStorage.removeItem("medstock_token");
+    localStorage.removeItem("medstock_demo");
+
+    setIsDemo(false);
     setIsAuthenticated(false);
     setAuthForm({
       store_name: "",
@@ -89,6 +97,36 @@ function App() {
     });
     setAuthMode("login");
     setAuthError("");
+  };
+
+  const handleDemoLogin = async () => {
+    setAuthError("");
+    setAuthLoading(true);
+
+    try {
+      const response = await apiFetch("/auth/demo", {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not start demo.");
+      }
+
+      localStorage.setItem("medstock_token", data.access_token);
+      localStorage.setItem("medstock_demo", "true");
+
+      setIsDemo(true);
+      setIsAuthenticated(true);
+
+      await loadMedications();
+      await fetchMovements();
+    } catch (error) {
+      setAuthError(error.message || "Could not start demo.");
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
   const handleAuthSubmit = async (event) => {
@@ -128,6 +166,9 @@ function App() {
       }
 
       localStorage.setItem("medstock_token", loginData.access_token);
+      localStorage.removeItem("medstock_demo");
+
+      setIsDemo(false);
       setIsAuthenticated(true);
       await loadMedications();
       await fetchMovements();
@@ -252,6 +293,7 @@ function App() {
     setShowAddForm(true);
     setFormError("");
     setFormSuccess("");
+    setInvalidFields([]);
 
     setFormData({
       name: med.name ?? "",
@@ -270,6 +312,12 @@ function App() {
 
 
   async function handleDeleteMedication(med) {
+    if (isDemo) {
+      window.alert(
+        "Demo Mode — Changes are disabled. Create an account to delete medications."
+      );
+      return;
+    }
     const confirmed = window.confirm(
       `Are you sure you want to delete ${med.name}? This cannot be undone.`
     );
@@ -301,6 +349,54 @@ function App() {
   
   async function handleAddMedication(event) {
     event.preventDefault();
+
+    const requiredFields = [
+      ["name", "Medication name"],
+      ["strength", "Strength"],
+      ["dosage_form", "Dosage form"],
+      ["ndc", "NDC"],
+      ["quantity", "Quantity in stock"],
+      ["reorder_level", "Reorder level"],
+    ];
+
+    const missingFields = requiredFields
+      .filter(([field]) => !String(formData[field] ?? "").trim())
+      .map(([, label]) => label);
+
+    if (missingFields.length > 0) {
+      const emptyFieldNames = requiredFields
+        .filter(([field]) => !String(formData[field] ?? "").trim())
+        .map(([field]) => field);
+
+      setInvalidFields(emptyFieldNames);
+      setFormError("");
+      setFormSuccess("");
+      return;
+    }
+
+      const invalidNumberFields = ["quantity", "reorder_level"].filter(
+        (field) => {
+          const value = Number(formData[field]);
+          return !Number.isFinite(value) || value < 0;
+        }
+      );
+
+      if (invalidNumberFields.length > 0) {
+        setInvalidFields(invalidNumberFields);
+        setFormError("");
+        setFormSuccess("");
+        return;
+      }
+
+      setInvalidFields([]);
+
+      if (isDemo) {
+        setFormError(
+          "Demo Mode — Changes are disabled. Create an account to add or edit medications."
+        );
+        return;
+      }
+
     setSaving(true);
     setFormError("");
     setFormSuccess("");
@@ -438,6 +534,47 @@ function App() {
 
   const handleStockSubmit = async (e) => {
     e.preventDefault();
+    
+    const requiredStockFields = [
+      "medication_id",
+      "movement_type",
+      "quantity",
+    ];
+
+    const missingStockFields = requiredStockFields.filter(
+      (field) => !String(stockForm[field] ?? "").trim()
+    );
+
+    if (missingStockFields.length > 0) {
+      setInvalidStockFields(missingStockFields);
+      setStockError("");
+      setStockSuccess("");
+      return;
+    }
+
+    const quantity = Number(stockForm.quantity);
+
+    const invalidQuantity =
+      !Number.isFinite(quantity) ||
+      (stockForm.movement_type === "adjustment"
+        ? quantity < 0
+        : quantity <= 0);
+
+    if (invalidQuantity) {
+      setInvalidStockFields(["quantity"]);
+      setStockError("");
+      setStockSuccess("");
+      return;
+    }
+
+    setInvalidStockFields([]);
+
+    if (isDemo) {
+      setStockError(
+        "Demo Mode — Changes are disabled. Create an account to record stock movements."
+      );
+      return;
+    }
 
     setStockError("");
     setStockSuccess("");
@@ -663,6 +800,17 @@ function App() {
                 </button>
               </form>
 
+              {authMode === "login" && (
+                <button
+                  type="button"
+                  className="demo-button"
+                  onClick={handleDemoLogin}
+                  disabled={authLoading}
+                >
+                  {authLoading ? "Opening demo..." : "Try Demo — No Login Required"}
+                </button>
+              )}
+
               <div className="auth-switch">
                 {authMode === "login"
                   ? "Don't have an account?"
@@ -753,6 +901,16 @@ function App() {
       </aside>
 
       <main className="main-content">
+        {isDemo && (
+          <div className="demo-banner">
+            <strong>Demo Mode — Read Only</strong>
+            <span>
+              You're exploring sample pharmacy inventory.
+              Changes are disabled in this demo.
+            </span>
+          </div>
+        )}
+
         <header className="topbar">
           <div>
             <span className="eyebrow">WORKSPACE / INVENTORY</span>
@@ -768,38 +926,41 @@ function App() {
             >
               <RefreshCw size={16} /> Refresh
             </button>
+              <>
+              <button
+                type="button"
+                className="refresh-button"
+                onClick={() => {
+                  setStockForm({
+                    medication_id: "",
+                    movement_type: "received",
+                    quantity: "",
+                    reason: "",
+                  });
+                  setStockError("");
+                  setStockSuccess("");
+                  setInvalidStockFields([]);
+                  setShowStockForm(true);
+                }}
+              >
+                <Plus size={17} /> Record stock
+              </button>
 
-            <button
-              type="button"
-              className="refresh-button"
-              onClick={() => {
-                setStockForm({
-                  medication_id: "",
-                  movement_type: "received",
-                  quantity: "",
-                  reason: "",
-                });
-                setStockError("");
-                setStockSuccess("");
-                setShowStockForm(true);
-              }}
-            >
-              <Plus size={17} /> Record stock
-            </button>
-
-            <button
-              type="button"
-              className="add-button"
-              onClick={() => {
-                setEditingId(null);
-                setFormData({ ...emptyForm });
-                setFormError("");
-                setFormSuccess("");
-                setShowAddForm(true);
-              }}
-            >
-              <Plus size={17} /> Add medication
-            </button>
+              <button
+                type="button"
+                className="add-button"
+                onClick={() => {
+                  setEditingId(null);
+                  setFormData({ ...emptyForm });
+                  setFormError("");
+                  setFormSuccess("");
+                  setInvalidFields([]);
+                  setShowAddForm(true);
+                }}
+              >
+                  <Plus size={17} /> Add medication
+                </button>
+              </>
           </div>
         </header>
         
@@ -854,22 +1015,41 @@ function App() {
                 </button>
               </div>
 
-              <form onSubmit={handleAddMedication} className="medication-form">
+              <form
+                onSubmit={handleAddMedication}
+                className="medication-form"
+                noValidate
+              >
                 <label>
                   Medication name *
                   <input
                     name="name"
                     value={formData.name}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setFormData((previous) => ({
                         ...previous,
                         name: event.target.value.toUpperCase(),
-                      }))
-                    }
+                      }));
+
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "name")
+                      );
+                    }}
+                    onFocus={() => {
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "name")
+                      );
+                    }}
                     required
                     maxLength={150}
                     placeholder="e.g. AMOXICILLIN"
                   />
+                  {invalidFields.includes("name") && (
+                    <span className="field-tooltip" role="alert">
+                      <AlertTriangle size={15} />
+                      Please fill out this field.
+                    </span>
+                  )}
                 </label>
 
                 <label>
@@ -877,16 +1057,31 @@ function App() {
                   <input
                     name="strength"
                     value={formData.strength}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setFormData((previous) => ({
                         ...previous,
                         strength: event.target.value.toUpperCase(),
-                      }))
-                    }
+                      }));
+
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "strength")
+                      );
+                    }}
+                    onFocus={() => {
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "strength")
+                      );
+                    }}
                     required
                     maxLength={50}
                     placeholder="e.g. 500 MG"
                   />
+                  {invalidFields.includes("strength") && (
+                    <span className="field-tooltip" role="alert">
+                      <AlertTriangle size={15} />
+                      Please fill out this field.
+                    </span>
+                  )}
                 </label>
 
                 <label>
@@ -894,7 +1089,18 @@ function App() {
                   <select
                     name="dosage_form"
                     value={formData.dosage_form}
-                    onChange={handleFormChange}
+                    onChange={(event) => {
+                      handleFormChange(event);
+
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "dosage_form")
+                      );
+                    }}
+                    onFocus={() => {
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "dosage_form")
+                      );
+                    }}
                     required
                   >
                     <option value="">Select dosage form</option>
@@ -914,6 +1120,12 @@ function App() {
                     <option value="Powder">POWDER</option>
                     <option value="Other">OTHER</option>
                   </select>
+                  {invalidFields.includes("dosage_form") && (
+                    <span className="field-tooltip" role="alert">
+                      <AlertTriangle size={15} />
+                      Please select a dosage form.
+                    </span>
+                  )}
                 </label>
 
                 <label>
@@ -936,13 +1148,29 @@ function App() {
                         ...previous,
                         ndc: formatted,
                       }));
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "ndc")
+                      );
                     }}
+
+                    onFocus={() => {
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "ndc")
+                      );
+                    }}
+
                     placeholder="12345-6789-01"
                     maxLength={13}
                     pattern="[0-9]{5}-[0-9]{4}-[0-9]{2}"
                     title="Enter NDC in the format 12345-6789-01"
                     required
                   />
+                  {invalidFields.includes("ndc") && (
+                    <span className="field-tooltip" role="alert">
+                      <AlertTriangle size={15} />
+                      Please fill out this field.
+                    </span>
+                  )}
                 </label>
 
                 <label>
@@ -952,10 +1180,24 @@ function App() {
                     name="quantity"
                     value={formData.quantity}
                     onChange={handleFormChange}
+                    onFocus={() => {
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "quantity")
+                      );
+                    }}
                     min="0"
-                    step="1"
+                    step="any"
                     required
                   />
+
+                  {invalidFields.includes("quantity") && (
+                    <span className="field-tooltip" role="alert">
+                      <AlertTriangle size={15} />
+                      {!String(formData.quantity).trim()
+                        ? "Please fill out this field."
+                        : "Enter a number of 0 or more."}
+                    </span>
+                  )}
                 </label>
 
                 <label>
@@ -965,10 +1207,24 @@ function App() {
                     name="reorder_level"
                     value={formData.reorder_level}
                     onChange={handleFormChange}
+                    onFocus={() => {
+                      setInvalidFields((previous) =>
+                        previous.filter((field) => field !== "reorder_level")
+                      );
+                    }}
                     min="0"
                     step="1"
                     required
                   />
+
+                  {invalidFields.includes("reorder_level") && (
+                    <span className="field-tooltip" role="alert">
+                      <AlertTriangle size={15} />
+                      {!String(formData.reorder_level).trim()
+                        ? "Please fill out this field."
+                        : "Enter a number of 0 or more."}
+                    </span>
+                  )}
                 </label>
    
                 <label>
@@ -1080,17 +1336,30 @@ function App() {
                 </button>
               </div>
 
-              <form onSubmit={handleStockSubmit} className="medication-form">
+              <form
+                onSubmit={handleStockSubmit}
+                className="medication-form"
+                noValidate
+              >
                 <label>
                   Medication *
                   <select
                     value={stockForm.medication_id}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setStockForm((previous) => ({
                         ...previous,
                         medication_id: event.target.value,
-                      }))
-                    }
+                      }));
+
+                      setInvalidStockFields((previous) =>
+                        previous.filter((field) => field !== "medication_id")
+                      );
+                    }}
+                    onFocus={() => {
+                      setInvalidStockFields((previous) =>
+                        previous.filter((field) => field !== "medication_id")
+                      );
+                    }}
                     required
                   >
                     <option value="">Select a medication</option>
@@ -1099,7 +1368,14 @@ function App() {
                         {med.name} (Current stock: {med.quantity})
                       </option>
                     ))}
-                  </select>
+                    </select>
+
+                    {invalidStockFields.includes("medication_id") && (
+                      <span className="field-tooltip" role="alert">
+                        <AlertTriangle size={15} />
+                        Please select a medication.
+                      </span>
+                    )}
                 </label>
 
                 <label>
@@ -1126,17 +1402,36 @@ function App() {
                     : "Quantity *"}
                   <input
                     type="number"
-                    min={stockForm.movement_type === "adjustment" ? "0" : "1"}
-                    step="1"
+                    min={stockForm.movement_type === "adjustment" ? "0" : "0.01"}
+                    step="any"
                     value={stockForm.quantity}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setStockForm((previous) => ({
                         ...previous,
                         quantity: event.target.value,
-                      }))
-                    }
+                      }));
+
+                      setInvalidStockFields((previous) =>
+                        previous.filter((field) => field !== "quantity")
+                      );
+                    }}
+                    onFocus={() => {
+                      setInvalidStockFields((previous) =>
+                        previous.filter((field) => field !== "quantity")
+                      );
+                    }}
                     required
                   />
+                  {invalidStockFields.includes("quantity") && (
+                    <span className="field-tooltip" role="alert">
+                      <AlertTriangle size={15} />
+                      {!String(stockForm.quantity).trim()
+                        ? "Please fill out this field."
+                        : stockForm.movement_type === "adjustment"
+                          ? "Enter a number of 0 or more."
+                          : "Enter a number greater than 0."}
+                    </span>
+                  )}
                 </label>
 
                 <label>
@@ -1341,7 +1636,7 @@ function App() {
                               type="button"
                               className="edit-button"
                               onClick={() => handleEditMedication(med)}
-                            >
+                              >
                               <Pencil size={14} />
                               Edit
                             </button>

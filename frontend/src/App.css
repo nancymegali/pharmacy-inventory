@@ -1210,3 +1210,93 @@ button.stat-card:focus-visible {
 .auth-card .auth-switch button:hover {
   text-decoration: underline;
 }
+
+
+.demo-button {
+  width: 100%;
+  margin-top: 14px;
+  padding: 13px 18px;
+  background: transparent;
+  color: #213c4e;
+  border: 1.5px solid #7b949c;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.demo-button:hover:not(:disabled) {
+  background: #edf3f5;
+  border-color: #213c4e;
+}
+
+.demo-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+
+
+.demo-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+  background: #edf3f5;
+  border: 1px solid #b9cbd1;
+  border-radius: 8px;
+  color: #213c4e;
+  font-size: 14px;
+}
+
+.demo-banner strong {
+  font-weight: 700;
+}
+
+.demo-banner span {
+  color: #536c7c;
+}
+
+
+.medication-form label {
+  position: relative;
+}
+
+.field-tooltip {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  z-index: 20;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 10px 13px;
+  border: 1px solid #F1D8DC;
+  border-radius: 9px;
+  background: #FFF5F5;
+  color: #A64F5A;
+
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+
+  box-shadow: 0 6px 18px rgba(48, 74, 102, 0.12);
+}
+
+.field-tooltip::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 18px;
+  width: 10px;
+  height: 10px;
+  background: #FFF5F5;
+  border-top: 1px solid #F1D8DC;
+  border-left: 1px solid #F1D8DC;
+  transform: rotate(45deg);
+}

@@ -110,8 +110,8 @@ class MedicationCreate(BaseModel):
     strength: str = Field(min_length=1, max_length=50)
     dosage_form: str = Field(min_length=1, max_length=50)
     ndc: str | None = Field(default=None, max_length=20)
-    quantity: int = Field(default=0, ge=0)
-    reorder_level: int = Field(default=10, ge=0)
+    quantity: Decimal = Field(default=Decimal("0"), ge=0, decimal_places=3)
+    reorder_level: Decimal = Field(default=Decimal("10"), ge=0, decimal_places=3)
     unit_price: Decimal | None = Field(default=None, ge=0)
     expiration_date: date | None = None
     supplier: str | None = Field(default=None, max_length=150)
@@ -125,7 +125,7 @@ class MedicationUpdate(MedicationCreate):
 class StockMovementCreate(BaseModel):
     medication_id: int = Field(gt=0)
     movement_type: Literal["received", "removed", "adjustment"]
-    quantity: int = Field(gt=0)
+    quantity: Decimal = Field(ge=0, decimal_places=3)
     reason: str | None = Field(default=None, max_length=255)
 
 
@@ -771,6 +771,11 @@ def create_stock_movement(
     current_user=Depends(require_write_access),
 ):
     pharmacy_id = current_user["pharmacy_id"]
+    if movement.movement_type != "adjustment" and movement.quantity <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Quantity must be greater than 0 for received or removed stock",
+        )
 
     try:
         with engine.begin() as connection:
