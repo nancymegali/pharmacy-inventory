@@ -28,8 +28,11 @@ const emptyForm = {
   strength: "",
   dosage_form: "",
   ndc: "",
+  package_size: "",
+  package_count: "",
   quantity: "",
   reorder_level: "",
+  package_price: "",
   unit_price: "",
   expiration_date: "",
   supplier: "",
@@ -351,9 +354,25 @@ function App() {
       strength: med.strength ?? "",
       dosage_form: med.dosage_form ?? "",
       ndc: med.ndc ?? "",
+
+      package_size: String(med.package_size ?? 1),
+      package_count:
+        med.package_size > 0
+          ? String(Math.floor(Number(med.quantity ?? 0) / Number(med.package_size)))
+          : String(Math.floor(Number(med.quantity ?? 0))),
       quantity: String(med.quantity ?? 0),
+
       reorder_level: String(med.reorder_level ?? 10),
-      unit_price: med.unit_price == null ? "" : String(med.unit_price),
+
+      package_price:
+        med.package_price != null
+          ? String(med.package_price)
+          : med.unit_price != null
+            ? String(Number(med.unit_price) * Number(med.package_size ?? 1))
+            : "",
+      unit_price:
+        med.unit_price == null ? "" : String(med.unit_price),
+
       expiration_date: med.expiration_date ?? "",
       supplier: med.supplier ?? "",
     });
@@ -394,7 +413,31 @@ function App() {
 
   function handleFormChange(event) {
     const { name, value } = event.target;
-    setFormData((previous) => ({ ...previous, [name]: value }));
+
+    setFormData((previous) => {
+      const updated = {
+        ...previous,
+        [name]: value,
+      };
+
+      if (
+        editingId === null &&
+        (name === "package_size" || name === "package_count")
+      ) {
+        const packageSize = Number(updated.package_size);
+        const packageCount = Number(updated.package_count);
+
+        updated.quantity =
+          updated.package_size !== "" &&
+          updated.package_count !== "" &&
+          packageSize > 0 &&
+          packageCount > 0
+            ? String(packageSize * packageCount)
+            : "";
+      }
+
+      return updated;
+    });
   }
 
   
@@ -406,9 +449,13 @@ function App() {
       ["strength", "Strength"],
       ["dosage_form", "Dosage form"],
       ["ndc", "NDC"],
-      ["quantity", "Quantity in stock"],
+      ["package_size", "Pills per bottle"],
       ["reorder_level", "Reorder level"],
     ];
+
+    if (editingId === null) {
+      requiredFields.push(["package_count", "Number of bottles"]);
+    }
 
     const missingFields = requiredFields
       .filter(([field]) => !String(formData[field] ?? "").trim())
@@ -425,12 +472,30 @@ function App() {
       return;
     }
 
-      const invalidNumberFields = ["quantity", "reorder_level"].filter(
-        (field) => {
-          const value = Number(formData[field]);
-          return !Number.isFinite(value) || value < 0;
+      const invalidNumberFields = [
+        "package_size",
+        ...(editingId === null ? ["package_count"] : []),
+        "reorder_level",
+      ].filter((field) => {
+        const value = Number(formData[field]);
+
+        if (!Number.isFinite(value)) return true;
+
+        if (field === "package_size" || field === "package_count") {
+          return !Number.isInteger(value) || value <= 0;
         }
-      );
+
+        return value < 0;
+      });
+
+      if (
+        formData.package_price !== "" &&
+        (!Number.isFinite(Number(formData.package_price)) ||
+          Number(formData.package_price) < 0)
+      ) {
+        setFormError("Price per bottle must be a valid, non-negative number.");
+        return;
+      }
 
       if (invalidNumberFields.length > 0) {
         setInvalidFields(invalidNumberFields);
@@ -453,15 +518,35 @@ function App() {
     setFormSuccess("");
 
     
+    const packageSize = Number(formData.package_size);
+    const packageCount = Number(formData.package_count);
+
     const payload = {
       name: formData.name.trim(),
       strength: formData.strength.trim(),
       dosage_form: formData.dosage_form,
       ndc: formData.ndc.trim() || null,
-      quantity: Number(formData.quantity),
+
+      quantity:
+        editingId !== null
+          ? Number(formData.quantity)
+          : packageSize * packageCount,
+      package_size: packageSize,
+      package_price:
+        formData.package_price === ""
+          ? null
+          : Number(formData.package_price),
       reorder_level: Number(formData.reorder_level),
+
       unit_price:
-        formData.unit_price === "" ? null : Number(formData.unit_price),
+        formData.package_price === ""
+          ? null
+          : Number(
+              (
+                Number(formData.package_price) / packageSize
+              ).toFixed(4)
+            ),
+
       expiration_date: formData.expiration_date || null,
       supplier: formData.supplier.trim() || null,
     };
@@ -1217,31 +1302,57 @@ function App() {
                 </label>
 
                 <label>
-                  Quantity in stock *
+                  Package Size *
                   <input
                     type="number"
-                    name="quantity"
-                    value={formData.quantity}
+                    name="package_size"
+                    value={formData.package_size}
                     onChange={handleFormChange}
-                    onFocus={() => {
-                      setInvalidFields((previous) =>
-                        previous.filter((field) => field !== "quantity")
-                      );
-                    }}
-                    min="0"
-                    step="any"
+                    min="1"
+                    step="1"
+                    placeholder="e.g. 100"
                     required
                   />
-
-                  {invalidFields.includes("quantity") && (
-                    <span className="field-tooltip" role="alert">
-                      <AlertTriangle size={15} />
-                      {!String(formData.quantity).trim()
-                        ? "Please fill out this field."
-                        : "Enter a number of 0 or more."}
-                    </span>
-                  )}
                 </label>
+
+                {editingId === null && (
+                  <label>
+                    Number of bottles *
+                    <input
+                      type="number"
+                      name="package_count"
+                      value={formData.package_count}
+                      onChange={handleFormChange}
+                      min="1"
+                      step="1"
+                      placeholder="e.g. 2"
+                      required
+                    />
+                  </label>
+                )}
+
+
+                <div
+                  className="calculated-quantity"
+                  style={{
+                    gridColumn: "1 / -1",
+                    fontSize: "13px",
+                    textAlign: "left",
+                    marginTop: "-8px",
+                    marginBottom: "4px",
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>
+                    {editingId !== null
+                      ? "Current stock: "
+                      : "Total quantity: "}
+                  </span>
+                  <strong>
+                    {formData.quantity !== ""
+                      ? `${Number(formData.quantity).toLocaleString()} pills`
+                      : "—"}
+                  </strong>
+                </div>
 
                 <label>
                   Reorder level *
@@ -1271,15 +1382,15 @@ function App() {
                 </label>
    
                 <label>
-                  Unit price ($)
+                  Price ($)
                   <input
                     type="number"
-                    name="unit_price"
-                    value={formData.unit_price}
+                    name="package_price"
+                    value={formData.package_price}
                     onChange={handleFormChange}
                     min="0"
                     step="0.01"
-                    placeholder="Optional"
+                    placeholder="e.g. 25.00"
                   />
                 </label>
 

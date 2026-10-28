@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 from urllib.parse import quote_plus
+from typing import Optional
 
 import jwt
 from dotenv import load_dotenv
@@ -115,6 +116,8 @@ class MedicationCreate(BaseModel):
     unit_price: Decimal | None = Field(default=None, ge=0)
     expiration_date: date | None = None
     supplier: str | None = Field(default=None, max_length=150)
+    package_size: Optional[int] = Field(default=None, gt=0)
+    package_price: Optional[Decimal] = Field(default=None, ge=0, decimal_places=2)
 
 
 class MedicationUpdate(MedicationCreate):
@@ -632,13 +635,13 @@ def create_medication(
                     (
                         pharmacy_id, name, strength, dosage_form, ndc,
                         quantity, reorder_level, unit_price,
-                        expiration_date, supplier
+                        expiration_date, supplier, package_size, package_price
                     )
                     VALUES
                     (
                         :pharmacy_id, :name, :strength, :dosage_form, :ndc,
                         :quantity, :reorder_level, :unit_price,
-                        :expiration_date, :supplier
+                        :expiration_date, :supplier, :package_size, :package_price
                     )
                 """),
                 data,
@@ -690,7 +693,9 @@ def update_medication(
                         reorder_level = :reorder_level,
                         unit_price = :unit_price,
                         expiration_date = :expiration_date,
-                        supplier = :supplier
+                        supplier = :supplier,
+                        package_size = :package_size,
+                        package_price = :package_price
                     WHERE id = :id
                       AND pharmacy_id = :pharmacy_id
                 """),
