@@ -2,7 +2,7 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 export async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem("medstock_token");
+  const token = sessionStorage.getItem("medstock_token");
 
   const headers = {
     ...options.headers,
@@ -16,10 +16,19 @@ export async function apiFetch(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  return fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
   });
+
+  if (response.status === 401 && token) {
+    sessionStorage.removeItem("medstock_token");
+    sessionStorage.removeItem("medstock_demo");
+
+    window.dispatchEvent(new Event("medstock:session-expired"));
+  }
+
+  return response;
 }
 
 export { API_URL };

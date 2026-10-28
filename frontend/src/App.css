@@ -1121,6 +1121,7 @@ button.stat-card:focus-visible {
 .logout-button {
   display: flex;
   align-items: center;
+  margin-top: auto;
   justify-content: center;
   gap: 8px;
   padding: 10px 16px;

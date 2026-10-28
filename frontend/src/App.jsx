@@ -66,10 +66,10 @@ function App() {
   const [stockLoading, setStockLoading] = useState(false);
 
   const [isAuthenticated, setIsAuthenticated] = useState(
-    Boolean(localStorage.getItem("medstock_token"))
+    Boolean(sessionStorage.getItem("medstock_token"))
   );
   const [isDemo, setIsDemo] = useState(
-    localStorage.getItem("medstock_demo") === "true"
+    sessionStorage.getItem("medstock_demo") === "true"
   );
   const [authMode, setAuthMode] = useState("login");
   const [resetToken, setResetToken] = useState(
@@ -85,8 +85,8 @@ function App() {
   });
 
   const handleLogout = () => {
-    localStorage.removeItem("medstock_token");
-    localStorage.removeItem("medstock_demo");
+    sessionStorage.removeItem("medstock_token");
+    sessionStorage.removeItem("medstock_demo");
 
     setIsDemo(false);
     setIsAuthenticated(false);
@@ -99,7 +99,58 @@ function App() {
     setAuthError("");
   };
 
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      sessionStorage.removeItem("medstock_token");
+      sessionStorage.removeItem("medstock_demo");
+
+      setIsAuthenticated(false);
+      setIsDemo(false);
+    };
+
+    window.addEventListener("medstock:session-expired", handleSessionExpired);
+
+    return () => {
+      window.removeEventListener("medstock:session-expired", handleSessionExpired);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const TIMEOUT = 30 * 60 * 1000;
+    let inactivityTimer;
+
+    const logoutAfterInactivity = () => {
+      handleLogout();
+    };
+
+    const resetTimer = () => {
+      clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(logoutAfterInactivity, TIMEOUT);
+    };
+
+    const events = ["mousedown", "keydown", "touchstart", "scroll"];
+
+    events.forEach((event) => {
+      window.addEventListener(event, resetTimer);
+    });
+
+    resetTimer();
+
+    return () => {
+      clearTimeout(inactivityTimer);
+
+      events.forEach((event) => {
+        window.removeEventListener(event, resetTimer);
+      });
+    };
+  }, [isAuthenticated]);
+
   const handleDemoLogin = async () => {
+    sessionStorage.removeItem("medstock_token");
+    sessionStorage.removeItem("medstock_demo");
+
     setAuthError("");
     setAuthLoading(true);
 
@@ -114,8 +165,8 @@ function App() {
         throw new Error(data.detail || "Could not start demo.");
       }
 
-      localStorage.setItem("medstock_token", data.access_token);
-      localStorage.setItem("medstock_demo", "true");
+      sessionStorage.setItem("medstock_token", data.access_token);
+      sessionStorage.setItem("medstock_demo", "true");
 
       setIsDemo(true);
       setIsAuthenticated(true);
@@ -165,8 +216,8 @@ function App() {
         throw new Error(loginData.detail || "Login failed.");
       }
 
-      localStorage.setItem("medstock_token", loginData.access_token);
-      localStorage.removeItem("medstock_demo");
+      sessionStorage.setItem("medstock_token", loginData.access_token);
+      sessionStorage.removeItem("medstock_demo");
 
       setIsDemo(false);
       setIsAuthenticated(true);
@@ -876,14 +927,6 @@ function App() {
             <Activity size={16} />
             Stock History
           </button>
-        </div>
-        <div className="sidebar-note">
-          <Activity size={17} />
-          <div>
-            <strong>System status</strong>
-            <span>Local development</span>
-          </div>
-          <i />
         </div>
 
         <button
@@ -1666,11 +1709,6 @@ function App() {
               </table>
             </div>
           )}
-
-          <div className="panel-footer">
-            <span>Inventory data from your local MySQL database</span>
-            <span><i className="online-dot" /> API connection</span>
-          </div>
         </section>
 
         </>
